@@ -64,19 +64,18 @@ Note how the `where` statement is formatted.  `~` is equivalent to the `LIKE` op
 ### Return a list with all the keywords used in notes
 
 ```elisp
-(delete-dups
- (flatten-list
-  (mapcar #'split-string (denote-db-query :select 'keywords))))
+(denote-db-query :select 'keywords :no-dup t)
 ```
+
+The `no-dup` key tells `denote-db-query` it should delete duplicate entries.
 
 ### Return a list with all the keywords used in notes with the `philosophy` keyword
 
 ```elisp
-(delete-dups
- (flatten-list
-  (mapcar #'split-string (denote-db-query
-                          :select 'keywords
-                          :where  '(~ keywords "%philosophy%")))))
+(denote-db-query
+ :select 'keywords
+ :where  '(~ keywords "%philosophy%")
+ :no-dup t)
 ```
 
 ### Return a list with the absolute path to all notes modified in the last 7 days
@@ -137,11 +136,7 @@ familiar with the interface.
 ```elisp
 (defun denote-db-open-file-with-keyword ()
   (interactive)
-  (let ((keywords (delete-dups
-                   (flatten-list
-                    (mapcar
-                     #'split-string
-                     (denote-db-query :select 'keywords))))))
+  (let ((keywords (denote-db-query :select 'keywords :no-dup t)))
     (when-let* ((keyword (completing-read "Keyword: " keywords nil t))
                 (data (denote-db-query
                        :select '(title file)

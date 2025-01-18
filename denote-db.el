@@ -46,6 +46,9 @@
 ;; * file (absolute path)
 ;; * last_modified (date of last modification, ISO 8601 format)
 ;; * signature
+;; * links (linked IDs, separated by spaces)
+;;
+;; To update the cache automatically, use `denote-db-update-mode'.
 
 ;;; Code:
 
@@ -129,7 +132,8 @@ The database will be empty.  To populate it, use
         "CREATE TABLE"
         " denote_db"
         " (id text(15), title text, keywords text, date datetime(19),"
-        " type text(10), file text, last_modified datetime(19), signature text)")))))
+        " type text(10), file text, last_modified datetime(19), signature text,"
+        " links text)")))))
 
 (defun denote-db-table-exists-p ()
   "Return non-nil if there's a table in the database."
@@ -218,9 +222,9 @@ QUERY can be a string or a list."
 ;; This is the main thing I have to document.  I haven't done it
 ;; because I'll probably change things in the future.
 ;;
-;; Basically, right now we have two keys, :select and :where.  They
-;; format the corresponding SELECT and WHERE statements for querying
-;; the database.
+;; Basically, right now we have two main keys, :select and :where.
+;; They format the corresponding SELECT and WHERE statements for
+;; querying the database.
 ;;
 ;; For :select, we accept a symbol or a list of symbols; it's also
 ;; possible to use a string which is passed verbatim.  If a list of
@@ -234,20 +238,69 @@ QUERY can be a string or a list."
 ;; are in the first position; for instance, ~ becomes " LIKE ".
 ;; Transformations are defined in `denote-db-sqlite-asocciations'.
 ;;
-;; If it proves useful, I'll also implement a :group key.
+;; The special :no-dup key deletes duplicate items from output.
+;;
+;; If it proves useful, I'll also implement a :group key.  I haven't
+;; found a use case yet.
+;;
 ;;;###autoload
-(cl-defun denote-db-query (&key (select "*") (where nil))
+(cl-defun denote-db-query (&key (select "*") (where nil) (no-dup nil))
   "Format a SQLite select query for the database."
   (let ((output (denote-db-query-1 select where)))
-    (if (= (length (car-safe output)) 1)
-        ;; We assume the user wants a flattened output if there's only
-        ;; one kind of item requested.  I think that's reasonable.
-        (flatten-list output)
-      output)))
+    ;; We assume the user wants a flattened output if there's only
+    ;; one kind of item requested.  I think that's reasonable.
+    (when (= (length (car-safe output)) 1)
+      (setq output (flatten-list output)))
+    ;; We also assume the user wants keywords and links as lists, and
+    ;; not as strings separated by whitespaces (which is how they are
+    ;; stored in database)
+    (when (or (eq 'keywords select) (eq 'links select))
+      (setq output (flatten-list (mapcar #'split-string output))))
+    ;; When more than one item is selected, it is a little trickier to
+    ;; convert the strings mentioned above to lists.  But the
+    ;; following code achieve it.
+    (when (and
+           (listp select)
+           (length> select 1)
+           (or (memq 'keywords select) (memq 'links select)))
+      (let ((key-pos (seq-position select 'keywords #'eq))
+            (links-pos (seq-position select 'links #'eq)))
+        (setq
+         output
+         (mapcar (lambda (x)
+                   (seq-map-indexed
+                    ;; “I heard you like lambdas, so I put a lambda in
+                    ;; your lambda”
+                    (lambda (y z)
+                      (if (or (eq z key-pos) (eq z links-pos))
+                          (split-string y)
+                        y))
+                    x))
+                 output))))
+    ;; Delete duplicate entries when the :no-dup key is passed
+    (when no-dup (setq output (delete-dups output)))
+    ;; Return output
+    output))
 
 (defun denote-db-id-exits-p (id)
   "Return non-nil if ID is already in the database."
   (denote-db-query :where `(= id ,id)))
+
+(defsubst denote-db--containing (string)
+  "Enclose STRING between percentage signs ('%').
+
+This allows to find occurences contaning it when using the LIKE SQLite
+operator."
+  (concat "%" string "%"))
+
+(defun denote-db--collect-linked-ids (file)
+  "Return a list with all IDs linked in FILE."
+  ;; Based on `denote-link-return-links'
+  (when-let* ((file-type (denote-filetype-heuristics file))
+              (regexp (denote--link-in-context-regexp file-type)))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (denote-link--collect-identifiers regexp))))
 
 (defun denote-db-insert-file (file &optional update nocommit)
   "Insert FILE into database.
@@ -263,11 +316,10 @@ you use that option."
   (when (and (denote-file-has-identifier-p file)
              ;; We don't store data for encrypted files in the
              ;; database, because
-             ;; a) it asks for password every time, and
+             ;; a) it would ask for password every time, and
              ;; b) it probably contains sensitive info anyway
-             (not (string-match
-                   (regexp-opt denote-encryption-file-extensions)
-                   file)))
+             (seq-some (lambda (e) (string-suffix-p e file))
+                       (denote-file-type-extensions)))
     (let* ((denote-id  (denote-retrieve-filename-identifier file))
            (type (denote-filetype-heuristics file))
            (title
@@ -282,6 +334,8 @@ you use that option."
                 (denote-retrieve-filename-signature file)))
            (mod-time (file-attribute-modification-time (file-attributes file)))
            (parsed-date (when denote-id (denote-valid-date-p denote-id)))
+           (links-list (denote-db--collect-linked-ids file))
+           (links-string (and links-list (string-join links-list " ")))
            (used-id (denote-db-id-exits-p denote-id))
            columns)
       (catch 'exit
@@ -306,7 +360,8 @@ you use that option."
                      (and type "type")
                      (and file "file")
                      (and mod-time "last_modified")
-                     (and signature "signature"))))
+                     (and signature "signature")
+                     (and links-string "links"))))
         ;; Actually update the database
         (let ((db (denote-db)))
          (sqlite-execute
@@ -326,7 +381,8 @@ you use that option."
                    (and type (format "'%s'" type))
                    (and file (format "'%s'" file))
                    (and mod-time (format-time-string "'%FT%T'" mod-time))
-                   (and signature (format "'%s'" signature))))
+                   (and signature (format "'%s'" signature))
+                   (and links-string (format "'%s'" links-string))))
             ", ")))
          (unless nocommit (sqlite-commit db)))))))
 
