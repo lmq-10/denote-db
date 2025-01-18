@@ -247,7 +247,7 @@ QUERY can be a string or a list."
 
 (defun denote-db-id-exits-p (id)
   "Return non-nil if ID is already in the database."
-  (denote-db-query :where (append '(= id) (list id))))
+  (denote-db-query :where `(= id ,id)))
 
 (defun denote-db-insert-file (file &optional update nocommit)
   "Insert FILE into database.

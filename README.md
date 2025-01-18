@@ -84,13 +84,13 @@ Note how the `where` statement is formatted.  `~` is equivalent to the `LIKE` op
 ```elisp
 (denote-db-query
  :select 'file
- :where (list '> 'last_modified
-              (format-time-string
-               "%FT%R"
-               (encode-time
-                (decoded-time-add
-                 (decode-time)
-                 (make-decoded-time :day -7))))))
+ :where `(> last_modified
+            ,(format-time-string
+              "%FT%R"
+              (encode-time
+               (decoded-time-add
+                (decode-time)
+                (make-decoded-time :day -7))))))
 ```
 
 ## Actually useful examples
@@ -115,7 +115,7 @@ Note how the `where` statement is formatted.  `~` is equivalent to the `LIKE` op
               (word (buffer-substring (car bounds) (cdr bounds))))
     (if-let* ((data (denote-db-query
                      :select '(title file)
-                     :where  (list '~ 'title (concat "%" word "%"))))
+                     :where  `(~ title ,(concat "%" word "%"))))
               (selected (assoc
                          (completing-read
                           "Link to note: "
@@ -145,7 +145,7 @@ familiar with the interface.
     (when-let* ((keyword (completing-read "Keyword: " keywords nil t))
                 (data (denote-db-query
                        :select '(title file)
-                       :where (list '~ 'keywords (concat "%" keyword "%")))))
+                       :where  `(~ keywords ,(concat "%" keyword "%")))))
       (find-file
        (cadr
         (assoc (completing-read "Select note: " data nil t) data))))))
