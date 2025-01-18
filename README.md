@@ -15,7 +15,7 @@ settled yet on what should and should not be included, and in what
 form or shape.  Suggestions are welcome!
 
 Note that I haven't documented everything yet.  I'll write a manual
-once the package is finished (if it is even finished :D).
+once the package is finished (if it is ever finished :D).
 
 Currently, the following things are cached:
 
@@ -84,13 +84,13 @@ Note how the `where` statement is formatted.  `~` is equivalent to the `LIKE` op
 ```elisp
 (denote-db-query
  :select 'file
- :where `(> last_modified
-            ,(format-time-string
-              "%FT%R"
-              (encode-time
-               (decoded-time-add
-                (decode-time)
-                (make-decoded-time :day -7))))))
+ :where  `(> last_modified
+             ,(format-time-string
+               "%FT%R"
+               (encode-time
+                (decoded-time-add
+                 (decode-time)
+                 (make-decoded-time :day -7))))))
 ```
 
 ## Actually useful examples
@@ -150,11 +150,3 @@ familiar with the interface.
        (cadr
         (assoc (completing-read "Select note: " data nil t) data))))))
 ```
-
-## Pending things
-
-* Should we store the links in the database, too?  This could prove
-  very useful for things like backlinks, but it will also increase the
-  odds of the cache becoming out-of-sync.  We'll probably need to
-  store hash sums of the files and check them, just like Org Roam
-  does.  Also, it will be hard to implement.  Is it worth it?
