@@ -6,7 +6,7 @@
 ;; Maintainer: Lucas Quintana <lmq10@protonmail.com>
 ;; URL: https://github.com/lmq-10/denote-db
 ;; Created: 2025-01-17
-;; Version: 0.0.1-dev
+;; Version: 0.0.2-dev
 ;; Package-Requires: ((emacs "29.1") (denote "3.0"))
 
 ;; This program is NOT part of GNU Emacs.
@@ -52,7 +52,7 @@
 
 ;;; Code:
 
-(require 'cl-lib)
+(eval-when-compile (require 'cl-lib))
 (require 'denote)
 (require 'seq)
 (require 'sqlite)
@@ -69,13 +69,40 @@
   :group 'denote-search
   :type 'string)
 
+(defcustom denote-db-watch-changes nil
+  "If non-nil, `denote-db-update-mode' will watch for changes outside Emacs.
+
+This is done by marking the database as outdated every
+`denote-db-watch-time' seconds.  Then, when `denote-db-query' is called
+or a note is saved, the database is updated (using `denote-db-update'),
+integrating any changes made to the notes.
+
+This variable should be set before enabling `denote-db-update-mode'."
+  :type 'boolean)
+
+(defcustom denote-db-watch-time 3600
+  "Time (in seconds) to wait before scheduling an update to the database.
+
+Only used when `denote-db-update-mode' is enabled and
+`denote-db-watch-changes' is non-nil."
+  :type 'natnum)
+
 ;;; Main variables
 
 (defvar denote-db-sqlite-asocciations '((~ . " LIKE "))
   "Map of symbols and their corresponding SQLite translation.")
 
-(defvar denote-db--cached nil
-  "Database object, if it exists.")
+(defvar denote-db--watcher nil
+  "Timer used by `denote-db-update-mode'.
+
+Only used when `denote-db-watch-changes' is non-nil.")
+
+(defvar denote-db--should-update nil
+  "Non-nil if the database should be updated.
+
+Set by `denote-db--watcher'.
+
+Used only by `denote-db-maybe-update'.")
 
 (defvar denote-db--cached-alist nil
   "Alist of cached database objects.
@@ -245,7 +272,8 @@ QUERY can be a string or a list."
 ;;
 ;;;###autoload
 (cl-defun denote-db-query (&key (select "*") (where nil) (no-dup nil))
-  "Format a SQLite select query for the database."
+  "Query the Denote database."
+  (denote-db-maybe-update)
   (let ((output (denote-db-query-1 select where)))
     ;; We assume the user wants a flattened output if there's only
     ;; one kind of item requested.  I think that's reasonable.
@@ -281,6 +309,8 @@ QUERY can be a string or a list."
     (when no-dup (setq output (delete-dups output)))
     ;; Return output
     output))
+
+(defalias 'denote-db-api #'denote-db-query)
 
 (defun denote-db-id-exits-p (id)
   "Return non-nil if ID is already in the database."
@@ -390,6 +420,58 @@ you use that option."
   "Update data for FILE in the database."
   (denote-db-insert-file file :update))
 
+(defun denote-db-update ()
+  "Try to update the database, without recreating it.
+
+This function first checks for files which are not in the database, or
+which are present in it but don't exist anymore.  It then proceeds to
+fix these inconsistencies.  `denote-db-check-deleted-created' does this
+job.
+
+After that, it checks the modification time of every file in
+`denote-directory', and compares it with the time cached in the
+database (the `last_modified' column).  If the cached time is behind the
+real time, that file is updated then."
+  (interactive)
+  (message "Updating database...")
+  (unless (denote-db-check-database)
+    (denote-db-check-deleted-created)
+    (let ((cached-times (denote-db-query :select '(file last_modified)))
+          real-times)
+      (dolist (file (denote-directory-files))
+        (push
+         (cons file (file-attribute-modification-time (file-attributes file)))
+         real-times))
+      (dolist (ctime cached-times)
+        (when-let* ((rtime (assoc (car ctime) real-times)))
+          (when (string-lessp (cadr ctime) (format-time-string "%FT%T" (cdr rtime)))
+            (denote-db-insert-file (car rtime) :update :no-commit))))
+      (sqlite-commit (denote-db))
+      (message "Updating database...done"))))
+
+(defun denote-db-maybe-update ()
+  "Update the database if an update is scheduled.
+
+Only useful when `denote-db-update-mode' is enabled and
+`denote-db-watch-changes' is non-nil."
+  (when (and denote-db-watch-changes denote-db--should-update)
+    (setq denote-db--should-update nil) ; If we don't unset it first, infinite loop :(
+    (denote-db-update)
+    (and denote-db--watcher (cancel-timer denote-db--watcher))
+    (setq denote-db--watcher
+          (run-with-timer
+           denote-db-watch-time
+           nil
+           #'denote-db-mark-as-outdated))))
+
+(defun denote-db-mark-as-outdated ()
+  "Schedule an update for the database.
+
+The next call to `denote-db-query' will update the database.  It will
+also happen when the next note is saved if `denote-db-update-mode' is
+enabled.  Actually, any call to `denote-db-maybe-update' will do it."
+  (setq denote-db--should-update t))
+
 (defun denote-db-delete-file (file)
   "Delete FILE from database."
   (let ((db (denote-db)))
@@ -453,14 +535,30 @@ files."
       (denote-db-delete-file absolute-file))))
 
 (define-minor-mode denote-db-update-mode
-  "Toggle automatic update of Denote database."
+  "Toggle automatic update of Denote database.
+
+Every time a note is saved, deleted or moved, the entry corresponding to
+that note in the database will be properly updated.
+
+Additionally, if `denote-db-watch-changes' is non-nil, a wide update to
+the database will be scheduled every `denote-db-watch-time' seconds.
+Then, saving a note or calling `denote-db-query' will update the
+database.  This is useful if you also edit your notes outside Emacs."
   :global t
   (if denote-db-update-mode
       (progn
+        (denote-db-update)
+        (when denote-db-watch-changes
+          (setq denote-db--watcher
+                (run-with-timer
+                 denote-db-watch-time
+                 nil
+                 #'denote-db-mark-as-outdated)))
         (advice-add #'rename-file :after  #'denote-db-check-deleted-created)
         (advice-add #'delete-file :before #'denote-db--handle-delete)
         (add-hook 'find-file-hook #'denote-db--setup-file))
     (progn
+      (and denote-db--watcher (cancel-timer denote-db--watcher))
       (remove-hook 'find-file-hook #'denote-db--setup-file)
       (advice-remove #'rename-file #'denote-db-check-deleted-created)
       (advice-remove #'delete-file #'denote-db--handle-delete))))

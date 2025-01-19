@@ -27,15 +27,16 @@ Currently, the following things are cached:
 * file (absolute path)
 * last_modified (date of last modification, ISO 8601 format)
 * signature
+* links (linked IDs, separated by spaces)
 
 Generating the database with 500 notes takes 1.5 seconds on my laptop
 and roughly 16 seconds on my smartphone (most things are slower on
 Emacs for Android).  Ideally you would only generate the database
 once, because after that it will be updated automagically if you
-enable `denote-db-update-mode`.  Of course, if you edit the files
-outside Emacs, you should run `denote-db-regenerate-database` manually
-(although `denote-db-check-deleted-created` should also work for most
-scenarios).
+enable `denote-db-update-mode`.  If you edit your files outside Emacs,
+you should also set the variable `denote-db-watch-changes` to a
+non-nil value; that way, the database will be updated if unnoticed
+changes occur.
 
 Note that this is merely a library.  It is not useful by itself.  But
 look at all the fun things we can do (remember that the API is not
