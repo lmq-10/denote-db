@@ -301,7 +301,7 @@ QUERY can be a string or a list."
                     ;; your lambda”
                     (lambda (y z)
                       (if (or (eq z key-pos) (eq z links-pos))
-                          (split-string y)
+                          (and (stringp y) (split-string y))
                         y))
                     x))
                  output))))
