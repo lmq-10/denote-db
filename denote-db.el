@@ -363,7 +363,12 @@ you use that option."
             (or (denote-retrieve-front-matter-signature-value file type)
                 (denote-retrieve-filename-signature file)))
            (mod-time (file-attribute-modification-time (file-attributes file)))
-           (parsed-date (when denote-id (denote-valid-date-p denote-id)))
+           (parsed-date
+            (when denote-id
+              (condition-case nil
+                  ;; Only parse it as a date if it is a date
+                  (denote-valid-date-p denote-id)
+                (error nil))))
            (links-list (denote-db--collect-linked-ids file))
            (links-string (and links-list (string-join links-list " ")))
            (used-id (denote-db-id-exits-p denote-id))
