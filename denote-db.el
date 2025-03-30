@@ -6,7 +6,7 @@
 ;; Maintainer: Lucas Quintana <lmq10@protonmail.com>
 ;; URL: https://github.com/lmq-10/denote-db
 ;; Created: 2025-01-17
-;; Version: 0.0.2-dev
+;; Version: 0.0.3-dev
 ;; Package-Requires: ((emacs "29.1") (denote "3.0"))
 
 ;; This program is NOT part of GNU Emacs.
@@ -539,6 +539,22 @@ files."
     (when (denote-filename-is-note-p absolute-file)
       (denote-db-delete-file absolute-file))))
 
+(defun denote-db--handle-rename (file newfile &rest _)
+  "If FILE or NEWFILE should be in the database, update accordingly.
+Intended as an after advice for `rename-file'."
+  (setq file (expand-file-name file))
+  (setq newfile (expand-file-name newfile))
+  (let ((denote-dir (expand-file-name (denote-directory))))
+    (when (or (string-prefix-p denote-dir file)
+              (string-prefix-p denote-dir newfile))
+      ;; A note has been renamed, so update the database
+      (unless (eq major-mode 'wdired-mode)
+        ;; We don't update in WDired because a lot of renamings could
+        ;; be happening at once (we do it at the end though)
+        (denote-db-check-deleted-created)))))
+
+(declare-function wdired-do-renames "wdired" (renames))
+
 (define-minor-mode denote-db-update-mode
   "Toggle automatic update of Denote database.
 
@@ -559,15 +575,16 @@ database.  This is useful if you also edit your notes outside Emacs."
                  denote-db-watch-time
                  nil
                  #'denote-db-mark-as-outdated)))
-        (advice-add #'rename-file :after  #'denote-db-check-deleted-created)
+        (advice-add #'rename-file :after #'denote-db--handle-rename)
         (advice-add #'delete-file :before #'denote-db--handle-delete)
+        (advice-add #'wdired-do-renames :after #'denote-db-check-deleted-created)
         (add-hook 'find-file-hook #'denote-db--setup-file))
     (progn
       (and denote-db--watcher (cancel-timer denote-db--watcher))
       (remove-hook 'find-file-hook #'denote-db--setup-file)
-      (advice-remove #'rename-file #'denote-db-check-deleted-created)
+      (advice-remove #'wdired-do-renames #'denote-db-check-deleted-created)
+      (advice-remove #'rename-file #'denote-db--handle-rename)
       (advice-remove #'delete-file #'denote-db--handle-delete))))
-
 
 (provide 'denote-db)
 ;;; denote-db.el ends here
