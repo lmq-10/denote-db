@@ -111,6 +111,9 @@ Every element should be a cons in the form (DIRECTORY . OBJECT).
 
 This allows us to have different databases for different silos.")
 
+(defvar denote-db-include-encryption-file nil
+  "Whether to include encrypted file.")
+
 ;;; Main functions:
 
 (defun denote-db-file ()
@@ -344,23 +347,22 @@ unless NOCOMMIT is non-nil, in which case they aren't.  This is useful
 if a lot of files are inserted at once, but ensure to commit yourself if
 you use that option."
   (when (and (denote-file-has-identifier-p file)
-             ;; We don't store data for encrypted files in the
-             ;; database, because
-             ;; a) it would ask for password every time, and
-             ;; b) it probably contains sensitive info anyway
-             (seq-some (lambda (e) (string-suffix-p e file))
-                       (denote-file-type-extensions)))
+             (or denote-db-include-encryption-file
+                 (seq-some (lambda (e) (string-suffix-p e file))
+                           (denote-file-type-extensions))))
     (let* ((denote-id  (denote-retrieve-filename-identifier file))
            (type (denote-filetype-heuristics file))
+           (encrypted (seq-some (lambda (e) (string-suffix-p e file))
+                                denote-encryption-file-extensions))
            (title
-            (or (denote-retrieve-front-matter-title-value file type)
+            (or (unless encrypted (denote-retrieve-front-matter-title-value file type))
                 (denote-retrieve-filename-title file)
                 (file-name-base file)))
            (keywords-list
-            (sort (or (denote-retrieve-front-matter-keywords-value file type)
+            (sort (or (unless encrypted (denote-retrieve-front-matter-keywords-value file type))
                       (denote-extract-keywords-from-path file))))
            (signature
-            (or (denote-retrieve-front-matter-signature-value file type)
+            (or (unless encrypted (denote-retrieve-front-matter-signature-value file type))
                 (denote-retrieve-filename-signature file)))
            (mod-time (file-attribute-modification-time (file-attributes file)))
            (parsed-date
@@ -369,7 +371,7 @@ you use that option."
                   ;; Only parse it as a date if it is a date
                   (denote-valid-date-p denote-id)
                 (error nil))))
-           (links-list (denote-db--collect-linked-ids file))
+           (links-list (unless encrypted (denote-db--collect-linked-ids file)))
            (links-string (and links-list (string-join links-list " ")))
            (used-id (denote-db-id-exits-p denote-id))
            columns)
@@ -399,27 +401,27 @@ you use that option."
                      (and links-string "links"))))
         ;; Actually update the database
         (let ((db (denote-db)))
-         (sqlite-execute
-          db
-          (format
-           "INSERT INTO denote_db(%s) VALUES(%s)"
-           (string-join columns ", ")
-           (string-join
-            (delq nil
-                  (list
-                   (and denote-id (format "'%s'" denote-id))
-                   (and title (format "'%s'" title))
-                   (and keywords-list
-                        (format "'%s'" (string-join keywords-list " ")))
-                   (and parsed-date
-                        (format-time-string "'%FT%T'" parsed-date))
-                   (and type (format "'%s'" type))
-                   (and file (format "'%s'" file))
-                   (and mod-time (format-time-string "'%FT%T'" mod-time))
-                   (and signature (format "'%s'" signature))
-                   (and links-string (format "'%s'" links-string))))
-            ", ")))
-         (unless nocommit (sqlite-commit db)))))))
+          (sqlite-execute
+           db
+           (format
+            "INSERT INTO denote_db(%s) VALUES(%s)"
+            (string-join columns ", ")
+            (string-join
+             (delq nil
+                   (list
+                    (and denote-id (format "'%s'" denote-id))
+                    (and title (format "'%s'" title))
+                    (and keywords-list
+                         (format "'%s'" (string-join keywords-list " ")))
+                    (and parsed-date
+                         (format-time-string "'%FT%T'" parsed-date))
+                    (and type (format "'%s'" type))
+                    (and file (format "'%s'" file))
+                    (and mod-time (format-time-string "'%FT%T'" mod-time))
+                    (and signature (format "'%s'" signature))
+                    (and links-string (format "'%s'" links-string))))
+             ", ")))
+          (unless nocommit (sqlite-commit db)))))))
 
 (defun denote-db-update-file (file)
   "Update data for FILE in the database."
