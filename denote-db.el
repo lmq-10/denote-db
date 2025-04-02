@@ -357,8 +357,8 @@ you use that option."
                 (denote-retrieve-filename-title file)
                 (file-name-base file)))
            (keywords-list
-            (sort (or (denote-retrieve-front-matter-keywords-value file type)
-                      (denote-extract-keywords-from-path file))))
+            (or (denote-retrieve-front-matter-keywords-value file type)
+                (denote-extract-keywords-from-path file)))
            (signature
             (or (denote-retrieve-front-matter-signature-value file type)
                 (denote-retrieve-filename-signature file)))
