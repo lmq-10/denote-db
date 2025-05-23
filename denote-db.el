@@ -397,28 +397,35 @@ you use that option."
                      (and mod-time "last_modified")
                      (and signature "signature")
                      (and links-string "links"))))
-        ;; Actually update the database
+        ;; Update the database
         (let ((db (denote-db)))
          (sqlite-execute
           db
           (format
            "INSERT INTO denote_db(%s) VALUES(%s)"
            (string-join columns ", ")
-           (string-join
-            (delq nil
-                  (list
-                   (and denote-id (format "'%s'" denote-id))
-                   (and title (format "'%s'" title))
-                   (and keywords-list
-                        (format "'%s'" (string-join keywords-list " ")))
-                   (and parsed-date
-                        (format-time-string "'%FT%T'" parsed-date))
-                   (and type (format "'%s'" type))
-                   (and file (format "'%s'" file))
-                   (and mod-time (format-time-string "'%FT%T'" mod-time))
-                   (and signature (format "'%s'" signature))
-                   (and links-string (format "'%s'" links-string))))
-            ", ")))
+           (string-join (make-list (length columns) "?") ", "))
+          ;; These are the actual values to be inserted
+          (delq nil
+                (list
+                 ;; id
+                 denote-id
+                 ;; title
+                 title
+                 ;; keywords
+                 (and keywords-list (string-join keywords-list " "))
+                 ;; date
+                 (and parsed-date (format-time-string "%FT%T" parsed-date))
+                 ;; type
+                 (and type (format "%s" type))
+                 ;; file
+                 file
+                 ;; last_modified
+                 (and mod-time (format-time-string "%FT%T" mod-time))
+                 ;; signature
+                 signature
+                 ;; links
+                 links-string)))
          (unless nocommit (sqlite-commit db)))))))
 
 (defun denote-db-update-file (file)
